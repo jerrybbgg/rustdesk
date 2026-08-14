@@ -1,0 +1,37 @@
+name: Build Custom RustDesk Client
+on: [workflow_dispatch]
+
+env:
+  RUSTDESK_HOST: ${{ secrets.RUSTDESK_HOST }}
+  RUSTDESK_KEY: ${{ secrets.RUSTDESK_KEY }}
+  RUSTDESK_RELAY: ${{ secrets.RUSTDESK_RELAY == '' && secrets.RUSTDESK_HOST || secrets.RUSTDESK_RELAY }}
+  CUSTOM_APP_NAME: ${{ secrets.CUSTOM_APP_NAME == '' && 'RustDesk' || secrets.CUSTOM_APP_NAME }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 注入自定义配置
+        run: |
+          # 替换默认服务端配置为你的自建配置
+          sed -i "s/ddrsrv\.rustdesk\.com/${RUSTDESK_HOST}/g" src/common/settings.rs
+          sed -i "s/rustdesk\.com/${RUSTDESK_HOST}/g" src/common/settings.rs
+          sed -i "s/your-public-key/${RUSTDESK_KEY}/g" src/common/settings.rs
+          sed -i "s/RustDesk/${CUSTOM_APP_NAME}/g" Cargo.toml src/.rs */*.rs 2>/dev/null || true
+
+      - name: 自动编译
+        run: |
+          docker run --rm -v $(pwd):/home/rustdesk/build/rustdesk -v /dev/null:/home/rustdesk/build/rustdesk/.git \
+            ghcr.io/rustdesk/rustdesk-build:master \
+            bash -c "cd /home/rustdesk/build && python3 build.py --release"
+
+      - name: 导出编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: 自定义RustDesk客户端
+          path: build/output/*
