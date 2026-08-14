@@ -1,43 +1,64 @@
 name: Build Custom RustDesk Client
-on: [workflow_dispatch]
 
-env:
-  RUSTDESK_HOST: ${{ secrets.RUSTDESK_HOST }}
-  RUSTDESK_KEY: ${{ secrets.RUSTDESK_KEY }}
-  RUSTDESK_RELAY: ${{ secrets.RUSTDESK_RELAY == '' && secrets.RUSTDESK_HOST || secrets.RUSTDESK_RELAY }}
-  CUSTOM_APP_NAME: ${{ secrets.CUSTOM_APP_NAME == '' && 'RustDesk' || secrets.CUSTOM_APP_NAME }}
+on:
+  push:
+    branches: [ "master", "main" ] # 當你推送程式碼到 master 分支時觸發
+  workflow_dispatch: # 允許你在 GitHub 網頁上手動點擊執行
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-2022
+
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Set up Clang and LLVM
+      uses: egor-tensin/setup-clang@v1
       with:
-        fetch-depth: 0
+        version: latest
+        platform: x64
 
-    - name: Inject custom configuration
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: x86_64-pc-windows-msvc
+
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.x' # 自動採用最新的 Flutter 3 版本
+        channel: 'stable'
+        cache: true
+
+    - name: Install Vcpkg & Dependencies
       run: |
-        # Replace the default server configuration with your self-hosted configuration.
-        sed -i "s/drsrv\.rustdesk\.com/${RUSTDESK_HOST}/g" src/common/settings.rs
-        sed -i "s/rustdesk\.com/${RUSTDESK_HOST}/g" src/common/settings.rs
-        sed -i "s/your-public-key/${RUSTDESK_KEY}/g" src/common/settings.rs
-        sed -i "s/RustDesk/${CUSTOM_APP_NAME}/g" Cargo.toml src/rs /.rs 2>/dev/null || true
+        vcpkg integrate install
+        # RustDesk 編譯所需的 Windows 依賴庫（如 libvpx, opus 等）
+        # 官方通常內建了 vcpkg.json，此處會自動下載
 
-    - name: Automatic compilation
+    - name: Build Rust Backend
       run: |
-        docker run --rm -v $(pwd):/home/rustdesk/build/rustdesk -v /dev/null:/home/rustdesk/build/rustdesk/.git \
-        ghcr.io/rustdesk/rustdesk-build:master \
-        bash -c "cd /home/rustdesk/build && python3 build.py --release"
+        # 執行 Cargo 編譯產出橋接庫
+        cargo build --release
 
-    - name: Export build artifacts
+    - name: Build Flutter Frontend (Windows)
+      run: |
+        flutter pub get
+        flutter build windows --release
+
+    - name: Package Artifacts
+      shell: bash
+      run: |
+        # 將編譯好的 exe 與相關 dll 收集到一個資料夾或直接提取主程式
+        mkdir output
+        cp build/windows/runner/Release/* output/
+        # 重新命名為你的專案名稱
+        mv output/rustdesk.exe output/MyCustomRustDesk.exe
+
+    - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: custom-rustdesk-client
-        path: |
-          target/*.exe
-          target/*.deb
-          target/*.rpm
-          target/*.dmg
-          target/*.AppImage
-        retention-days: 30
+        name: Custom-RustDesk-Windows
+        path: output/
